@@ -1,16 +1,17 @@
-import os
-import torch
-import numpy as np
-import nn.vnn as vnn
 import collections
+import os
+
+import nn.vnn as vnn
+import numpy as np
+import torch
+from model.seq2seq import Module as Base
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
-from model.seq2seq import Module as Base
 
+from gen.utils.image_util import decompress_mask
 from models.utils.loss_utils import masked_mean
 from models.utils.metric import compute_f1, compute_exact
-from gen.utils.image_util import decompress_mask
 
 
 class Module(Base):
@@ -328,8 +329,7 @@ class Module(Base):
             p_subgoal = feat['out_subgoal'].squeeze(2)
             l_subgoal = feat['subgoals_completed']
             sg_loss = self.mse_loss(p_subgoal, l_subgoal)
-            sg_loss = sg_loss.view(-1) * pad_valid.float()
-            subgoal_loss = sg_loss.mean()
+            subgoal_loss = masked_mean(sg_loss.view(-1), pad_valid, dim=-1)
             losses['subgoal_aux'] = self.args.subgoal_aux_loss_wt * subgoal_loss
 
         # progress monitoring loss
@@ -337,8 +337,7 @@ class Module(Base):
             p_progress = feat['out_progress'].squeeze(2)
             l_progress = feat['subgoal_progress']
             pg_loss = self.mse_loss(p_progress, l_progress)
-            pg_loss = pg_loss.view(-1) * pad_valid.float()
-            progress_loss = pg_loss.mean()
+            progress_loss = masked_mean(pg_loss.view(-1), pad_valid, dim=-1)
             losses['progress_aux'] = self.args.pm_aux_loss_wt * progress_loss
 
         return losses
