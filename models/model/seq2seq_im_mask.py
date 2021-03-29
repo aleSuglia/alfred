@@ -24,14 +24,14 @@ class Module(Base):
 
         # encoder and self-attention
         self.enc = nn.LSTM(args.demb, args.dhid, bidirectional=True, batch_first=True)
-        self.enc_att = vnn.SelfAttn(args.dhid*2)
+        self.enc_att = vnn.SelfAttn(args.dhid * 2)
 
         # subgoal monitoring
         self.subgoal_monitoring = (self.args.pm_aux_loss_wt > 0 or self.args.subgoal_aux_loss_wt > 0)
 
         # frame mask decoder
         decoder = vnn.ConvFrameMaskDecoderProgressMonitor if self.subgoal_monitoring else vnn.ConvFrameMaskDecoder
-        self.dec = decoder(self.emb_action_low, args.dframe, 2*args.dhid,
+        self.dec = decoder(self.emb_action_low, args.dframe, 2 * args.dhid,
                            pframe=args.pframe,
                            attn_dropout=args.attn_dropout,
                            hstate_dropout=args.hstate_dropout,
@@ -83,7 +83,7 @@ class Module(Base):
                 # progress monitor supervision
                 if self.args.pm_aux_loss_wt > 0:
                     num_actions = len([a for sg in ex['num']['action_low'] for a in sg])
-                    subgoal_progress = [(i+1)/float(num_actions) for i in range(num_actions)]
+                    subgoal_progress = [(i + 1) / float(num_actions) for i in range(num_actions)]
                     feat['subgoal_progress'].append(subgoal_progress)
 
             #########
@@ -136,11 +136,11 @@ class Module(Base):
 
                 # low-level action mask
                 if load_mask:
-                    feat['action_low_mask'].append([self.decompress_mask(a['mask']) for a in ex['num']['action_low'] if a['mask'] is not None])
+                    feat['action_low_mask'].append(
+                        [self.decompress_mask(a['mask']) for a in ex['num']['action_low'] if a['mask'] is not None])
 
                 # low-level valid interact
                 feat['action_low_valid_interact'].append([a['valid_interact'] for a in ex['num']['action_low']])
-
 
         # tensorization and padding
         for k, v in feat.items():
@@ -163,12 +163,20 @@ class Module(Base):
                 feat[k] = pad_seq
             else:
                 # default: tensorize and pad sequence
-                seqs = [torch.tensor(vv, device=device, dtype=torch.float if ('frames' in k) else torch.long) for vv in v]
+                seqs = []
+
+                for vv in v:
+                    if isinstance(vv, torch.Tensor):
+                        seqs.append(vv.to(device))
+                    elif isinstance(vv, np.ndarray):
+                        seqs.append(torch.from_numpy(vv).to(device))
+                    else:
+                        seqs.append(torch.tensor(vv, dtype=torch.float if k in {'frames'} else torch.long).to(device))
+
                 pad_seq = pad_sequence(seqs, batch_first=True, padding_value=self.pad)
                 feat[k] = pad_seq
 
         return feat
-
 
     def serialize_lang_action(self, feat):
         '''
@@ -180,7 +188,6 @@ class Module(Base):
             if not self.test_mode:
                 feat['num']['action_low'] = [a for a_group in feat['num']['action_low'] for a in a_group]
 
-
     def decompress_mask(self, compressed_mask):
         '''
         decompress mask from json files
@@ -189,7 +196,6 @@ class Module(Base):
         mask = np.expand_dims(mask, axis=0)
         return mask
 
-
     def forward(self, feat, max_decode=300):
         cont_lang, enc_lang = self.encode_lang(feat)
         state_0 = cont_lang, torch.zeros_like(cont_lang)
@@ -197,7 +203,6 @@ class Module(Base):
         res = self.dec(enc_lang, frames, max_decode=max_decode, gold=feat['action_low'], state_0=state_0)
         feat.update(res)
         return feat
-
 
     def encode_lang(self, feat):
         '''
@@ -211,7 +216,6 @@ class Module(Base):
         cont_lang_goal_instr = self.enc_att(enc_lang_goal_instr)
 
         return cont_lang_goal_instr, enc_lang_goal_instr
-
 
     def reset(self):
         '''
@@ -242,7 +246,8 @@ class Module(Base):
         e_t = self.embed_action(prev_action) if prev_action is not None else self.r_state['e_t']
 
         # decode and save embedding and hidden states
-        out_action_low, out_action_low_mask, state_t, *_ = self.dec.step(self.r_state['enc_lang'], feat['frames'][:, 0], e_t=e_t, state_tm1=self.r_state['state_t'])
+        out_action_low, out_action_low_mask, state_t, *_ = self.dec.step(self.r_state['enc_lang'], feat['frames'][:, 0],
+                                                                         e_t=e_t, state_tm1=self.r_state['state_t'])
 
         # save states
         self.r_state['state_t'] = state_t
@@ -252,7 +257,6 @@ class Module(Base):
         feat['out_action_low'] = out_action_low.unsqueeze(0)
         feat['out_action_low_mask'] = out_action_low_mask.unsqueeze(0)
         return feat
-
 
     def extract_preds(self, out, batch, feat, clean_special_tokens=True):
         '''
@@ -277,7 +281,7 @@ class Module(Base):
             words = self.vocab['action_low'].index2word(alow)
 
             # sigmoid preds to binary mask
-            alow_mask = F.sigmoid(alow_mask)
+            alow_mask = torch.sigmoid(alow_mask)
             p_mask = [(alow_mask[t] > 0.5).cpu().numpy() for t in range(alow_mask.shape[0])]
 
             task_id_ann = self.get_task_and_ann_id(ex)
@@ -288,7 +292,6 @@ class Module(Base):
 
         return pred
 
-
     def embed_action(self, action):
         '''
         embed low-level action
@@ -297,7 +300,6 @@ class Module(Base):
         action_num = torch.tensor(self.vocab['action_low'].word2index(action), device=device)
         action_emb = self.dec.emb(action_num).unsqueeze(0)
         return action_emb
-
 
     def compute_loss(self, out, batch, feat):
         '''
@@ -319,7 +321,8 @@ class Module(Base):
 
         # mask loss
         valid_idxs = valid.view(-1).nonzero().view(-1)
-        flat_p_alow_mask = p_alow_mask.view(p_alow_mask.shape[0]*p_alow_mask.shape[1], *p_alow_mask.shape[2:])[valid_idxs]
+        flat_p_alow_mask = p_alow_mask.view(p_alow_mask.shape[0] * p_alow_mask.shape[1], *p_alow_mask.shape[2:])[
+            valid_idxs]
         flat_alow_mask = torch.cat(feat['action_low_mask'], dim=0)
         alow_mask_loss = self.weighted_mask_loss(flat_p_alow_mask, flat_alow_mask)
         losses['action_low_mask'] = alow_mask_loss * self.args.mask_loss_wt
@@ -342,7 +345,6 @@ class Module(Base):
 
         return losses
 
-
     def weighted_mask_loss(self, pred_masks, gt_masks):
         '''
         mask loss that accounts for weight-imbalance between 0 and 1 pixels
@@ -353,7 +355,6 @@ class Module(Base):
         outside = (bce * flipped_mask).sum() / (flipped_mask).sum()
         return inside + outside
 
-
     def flip_tensor(self, tensor, on_zero=1, on_non_zero=0):
         '''
         flip 0 and 1 values in tensor
@@ -362,7 +363,6 @@ class Module(Base):
         res[tensor == 0] = on_zero
         res[tensor != 0] = on_non_zero
         return res
-
 
     def compute_metric(self, preds, data):
         '''
@@ -375,4 +375,4 @@ class Module(Base):
             label = ' '.join([a['discrete_action']['action'] for a in ex['plan']['low_actions']])
             m['action_low_f1'].append(compute_f1(label.lower(), preds[i]['action_low'].lower()))
             m['action_low_em'].append(compute_exact(label.lower(), preds[i]['action_low'].lower()))
-        return {k: sum(v)/len(v) for k, v in m.items()}
+        return {k: sum(v) / len(v) for k, v in m.items()}
